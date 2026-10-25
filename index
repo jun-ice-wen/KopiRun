@@ -1,0 +1,1256 @@
+code
+Html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>KopiRun - Singapore Kopitiam Drink Order Tabulator</title>
+  <meta name="description" content="Mobile-optimized Singapore kopitiam drink order tabulator with automatic grouping and WhatsApp clipboard export." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"DM Sans"', 'system-ui', 'sans-serif'],
+            display: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+            receipt: ['"Space Mono"', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- React 18 & Babel UMD for Standalone Browser Execution -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body {
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .font-display { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-receipt { font-family: 'Space Mono', monospace; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900 antialiased selection:bg-blue-200">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const MAX_DRINK_SLOTS = 20;
+    const STORAGE_KEY = 'kopirun_standalone_v2';
+
+    const CUTE_ANIMAL_NAMES = [
+      'Curious Otter 🦦', 'Sleepy Panda 🐼', 'Chill Capybara 🦫', 'Fluffy Bunny 🐰',
+      'Happy Penguin 🐧', 'Smiling Quokka 🦔', 'Cozy Koala 🐨', 'Gentle Corgi 🐶',
+      'Playful Kitten 🐱', 'Sunny Duckling 🐥', 'Cheeky Hamster 🐹', 'Clever Fox 🦊',
+      'Gentle Alpaca 🦙', 'Baby Seal 🦭', 'Sweet Sloth 🦥', 'Merry Shiba 🐕',
+      'Brisk Chipmunk 🐿️', 'Little Hedgehog 🦔', 'Alert Meerkat 🐾', 'Red Panda 🦊'
+    ];
+
+    function getCuteAnimalName(slotNumber) {
+      const idx = Math.max(0, slotNumber - 1) % CUTE_ANIMAL_NAMES.length;
+      return CUTE_ANIMAL_NAMES[idx];
+    }
+
+    function getDisplayName(slot) {
+      if (slot.personName && slot.personName.trim()) {
+        return slot.personName.trim();
+      }
+      return getCuteAnimalName(slot.slotNumber);
+    }
+
+    const BASE_DRINKS = [
+      { id: 'kopi', name: 'Kopi', chinese: '咖啡', hasMilk: true, hasSweetness: true, hasGao: true },
+      { id: 'teh', name: 'Teh', chinese: '茶', hasMilk: true, hasSweetness: true, hasGao: true },
+      { id: 'milo', name: 'Milo', chinese: '美禄', hasMilk: true, hasSweetness: true, hasGao: true },
+      { id: 'green_tea', name: 'Green Tea', chinese: '绿茶 (热)', hasMilk: false, hasSweetness: false, hasGao: false },
+      { id: 'chinese_tea', name: 'Chinese Tea', chinese: '中国茶 (热)', hasMilk: false, hasSweetness: false, hasGao: false },
+      { id: 'honey_lemon', name: 'Honey Lemon', chinese: '蜂蜜柠檬 (热)', hasMilk: false, hasSweetness: true, hasGao: false },
+      { id: 'coke_zero', name: 'Coke-zero', chinese: '无糖可乐 (冰)', hasMilk: false, hasSweetness: false, hasGao: false },
+      { id: 'others', name: 'Others', chinese: '其他饮料', hasMilk: false, hasSweetness: true, hasGao: false },
+    ];
+
+    const PRESETS = [
+      { label: 'Kopi', sub: 'Standard', base: 'kopi', mod: { milk: 'none', sweetness: 'normal', iced: false }, bg: 'bg-blue-50 text-blue-900 border-blue-200' },
+      { label: 'Kopi-O Kosong', sub: 'Black, 0 Sugar', base: 'kopi', mod: { milk: 'o', sweetness: 'kosong', iced: false }, bg: 'bg-slate-900 text-white border-slate-800' },
+      { label: 'Teh-C Siew Dai', sub: 'Evap milk, less sweet', base: 'teh', mod: { milk: 'c', sweetness: 'siew_dai', iced: false }, bg: 'bg-sky-50 text-sky-900 border-sky-200' },
+      { label: 'Teh Peng', sub: 'Iced Milk Tea', base: 'teh', mod: { milk: 'none', sweetness: 'normal', iced: true }, bg: 'bg-blue-100 text-blue-950 border-blue-300' },
+      { label: 'Milo Peng', sub: 'Iced Malt Drink', base: 'milo', mod: { milk: 'none', sweetness: 'normal', iced: true }, bg: 'bg-cyan-100 text-cyan-950 border-cyan-300' },
+      { label: 'Honey Lemon', sub: 'Hot Siew Dai', base: 'honey_lemon', mod: { sweetness: 'siew_dai', iced: false }, bg: 'bg-indigo-50 text-indigo-900 border-indigo-200' },
+      { label: 'Coke-zero', sub: 'Iced', base: 'coke_zero', mod: { iced: true }, bg: 'bg-slate-100 text-slate-900 border-slate-300' },
+    ];
+
+    function isHotOnly(base) {
+      return base === 'green_tea' || base === 'chinese_tea' || base === 'honey_lemon';
+    }
+
+    function isIcedOnly(base) {
+      return base === 'coke_zero';
+    }
+
+    function canChooseTemp(base) {
+      return !isHotOnly(base) && !isIcedOnly(base);
+    }
+
+    function sanitizeModifiers(baseDrink, mod) {
+      let m = { ...mod };
+      let ruleTriggered = false;
+      let ruleExplanation = null;
+
+      if (isHotOnly(baseDrink)) {
+        m.iced = false;
+      } else if (isIcedOnly(baseDrink)) {
+        m.iced = true;
+      }
+
+      if (baseDrink === 'honey_lemon' && m.sweetness === 'kosong') {
+        m.sweetness = 'normal';
+      }
+
+      if ((baseDrink === 'kopi' || baseDrink === 'teh') && m.sweetness === 'kosong' && m.milk === 'none') {
+        m.milk = 'o';
+        ruleTriggered = true;
+        const drinkName = baseDrink === 'kopi' ? 'Kopi' : 'Teh';
+        ruleExplanation = `Kopitiam rule: ${drinkName} uses sweet condensed milk, so "${drinkName} Kosong" cannot exist! Switched to ${drinkName}-O Kosong (black). Choose "C" for evaporated milk.`;
+      }
+
+      if (['green_tea', 'chinese_tea', 'coke_zero', 'honey_lemon', 'others'].includes(baseDrink)) {
+        m.milk = 'none';
+        m.gao = false;
+      }
+
+      if (['green_tea', 'chinese_tea', 'coke_zero'].includes(baseDrink)) {
+        m.sweetness = 'normal';
+      }
+
+      return { modifiers: m, ruleTriggered, ruleExplanation };
+    }
+
+    // Naming convention: 'base beverage' 'milk type' 'sweetness'
+    function formatLocalKopitiamName(slot) {
+      const { baseDrink, modifiers, customName } = slot;
+
+      if (baseDrink === 'coke_zero') return 'Coke-zero (Iced)';
+      if (baseDrink === 'chinese_tea') return 'Chinese Tea (Hot)';
+      if (baseDrink === 'green_tea') return 'Green Tea (Hot)';
+      if (baseDrink === 'honey_lemon') {
+        const sweetStr = modifiers.sweetness === 'siew_dai' ? ' Siew Dai' : '';
+        return `Honey Lemon${sweetStr} (Hot)`;
+      }
+      if (baseDrink === 'others') {
+        const title = customName?.trim() || 'Custom Drink';
+        const sweetStr = modifiers.sweetness === 'siew_dai' ? ' Siew Dai' : modifiers.sweetness === 'kosong' ? ' Kosong' : '';
+        const tempStr = modifiers.iced ? ' Peng' : '';
+        return `${title}${sweetStr}${tempStr}`;
+      }
+
+      const baseName = baseDrink === 'kopi' ? 'Kopi' : baseDrink === 'teh' ? 'Teh' : 'Milo';
+      const parts = [baseName];
+
+      // 1. Milk type
+      if (modifiers.milk === 'o') parts.push('O');
+      else if (modifiers.milk === 'c') parts.push('C');
+      else if (modifiers.milk === 'plus_c') parts.push('+C');
+
+      // 2. Sweetness
+      if (modifiers.sweetness === 'siew_dai') parts.push('Siew Dai');
+      else if (modifiers.sweetness === 'kosong') parts.push('Kosong');
+
+      // Additional modifiers
+      if (modifiers.gao) parts.push('Gao');
+      if (modifiers.iced) parts.push('Peng');
+
+      let result = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        const part = parts[i];
+        if (i === 1 && (part === 'O' || part === 'C' || part === '+C')) {
+          result += '-' + part;
+        } else {
+          result += ' ' + part;
+        }
+      }
+      return result;
+    }
+
+    function formatDescriptiveName(slot) {
+      const { baseDrink, modifiers, customName } = slot;
+      if (baseDrink === 'others') return customName?.trim() || 'Custom Drink';
+      if (baseDrink === 'coke_zero') return 'Coke-zero (Iced)';
+      if (baseDrink === 'chinese_tea') return 'Chinese Tea (Hot)';
+      if (baseDrink === 'green_tea') return 'Green Tea (Hot)';
+      if (baseDrink === 'honey_lemon') {
+        const sw = modifiers.sweetness === 'siew_dai' ? 'Less Sweet' : 'Regular';
+        return `Honey Lemon (Hot, ${sw})`;
+      }
+
+      const baseName = baseDrink === 'kopi' ? 'Coffee' : baseDrink === 'teh' ? 'Tea' : 'Milo';
+      const desc = [];
+      if (modifiers.iced) desc.push('Iced');
+      desc.push(baseName);
+
+      const notes = [];
+      if (modifiers.milk === 'o') notes.push('Black / No Milk');
+      else if (modifiers.milk === 'c') notes.push('Evap Milk');
+      else if (modifiers.milk === 'plus_c') notes.push('Extra Evap Milk');
+      else notes.push('Condensed Milk');
+
+      if (modifiers.sweetness === 'siew_dai') notes.push('Less Sweet');
+      else if (modifiers.sweetness === 'kosong') notes.push('Zero Sugar');
+
+      if (modifiers.gao) notes.push('Extra Strong');
+      return `${desc.join(' ')} (${notes.join(', ')})`;
+    }
+
+    function getDrinkCanonicalKey(slot) {
+      const { baseDrink, modifiers, customName } = slot;
+      if (baseDrink === 'others') {
+        return `others_${(customName || '').trim().toLowerCase()}_${modifiers.sweetness}_${modifiers.iced}`;
+      }
+      return `${baseDrink}_${modifiers.milk}_${modifiers.sweetness}_${modifiers.gao ? 'gao' : 'std'}_${modifiers.iced ? 'iced' : 'hot'}`;
+    }
+
+    function groupDrinkOrders(slots) {
+      const active = slots.filter(s => s.active);
+      const map = new Map();
+
+      for (const slot of active) {
+        const key = getDrinkCanonicalKey(slot);
+        const local = formatLocalKopitiamName(slot);
+        const desc = formatDescriptiveName(slot);
+        const person = getDisplayName(slot);
+
+        if (!map.has(key)) {
+          map.set(key, {
+            key,
+            localName: local,
+            descriptiveName: desc,
+            quantity: 1,
+            personNames: [person],
+            isIced: slot.modifiers.iced,
+          });
+        } else {
+          const item = map.get(key);
+          item.quantity += 1;
+          item.personNames.push(person);
+        }
+      }
+      return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity || a.localName.localeCompare(b.localName));
+    }
+
+    function generateClipboardText(slots, mode = 'local') {
+      const active = slots.filter(s => s.active);
+      if (active.length === 0) return 'No drink orders entered yet.';
+
+      const grouped = groupDrinkOrders(slots);
+      const icedCount = active.filter(s => s.modifiers.iced).length;
+      const hotCount = active.length - icedCount;
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const lines = [
+        `☕ *KOPITIAM DRINK ORDER* (${active.length} drinks)`,
+        `🕒 Time: ${timeStr} · 🧊 ${icedCount} Iced · 🔥 ${hotCount} Hot`,
+        `━━━━━━━━━━━━━━━━━━━━━━`,
+        `*📋 ORDER SUMMARY (FOR UNCLE/AUNTIE):*`,
+      ];
+
+      for (const item of grouped) {
+        const name = mode === 'local' ? item.localName : item.descriptiveName;
+        lines.push(`• *${item.quantity}x* ${name}`);
+      }
+
+      lines.push(`━━━━━━━━━━━━━━━━━━━━━━`);
+      lines.push(`*👥 WHO ORDERED WHAT:*`);
+
+      for (const slot of active) {
+        const person = getDisplayName(slot);
+        const name = mode === 'local' ? formatLocalKopitiamName(slot) : formatDescriptiveName(slot);
+        lines.push(`• ${person}: ${name}`);
+      }
+
+      lines.push(`━━━━━━━━━━━━━━━━━━━━━━`);
+      lines.push(`_Tabulated via KopiRun 🇸🇬_`);
+      return lines.join('\n');
+    }
+
+    function getInitialSlots() {
+      const arr = [];
+      for (let i = 1; i <= MAX_DRINK_SLOTS; i++) {
+        arr.push({
+          id: `slot-${i}`,
+          slotNumber: i,
+          personName: '',
+          baseDrink: 'kopi',
+          customName: '',
+          modifiers: { milk: 'none', sweetness: 'normal', gao: false, iced: false },
+          active: i === 1,
+        });
+      }
+      return arr;
+    }
+
+    function getSampleSlots() {
+      const samples = [
+        { person: '', base: 'kopi', sweetness: 'kosong', milk: 'o', iced: false },
+        { person: 'Wei Ling', base: 'kopi', sweetness: 'kosong', milk: 'o', iced: false },
+        { person: '', base: 'teh', sweetness: 'siew_dai', milk: 'c', iced: true },
+        { person: 'Sarah', base: 'teh', sweetness: 'siew_dai', milk: 'c', iced: true },
+        { person: '', base: 'milo', sweetness: 'normal', milk: 'none', iced: true },
+        { person: 'Auntie Tan', base: 'kopi', sweetness: 'siew_dai', milk: 'none', gao: true, iced: false },
+        { person: '', base: 'honey_lemon', sweetness: 'siew_dai', iced: false },
+        { person: 'Farhan', base: 'coke_zero', iced: true },
+      ];
+      const arr = [];
+      for (let i = 1; i <= MAX_DRINK_SLOTS; i++) {
+        const s = samples[i - 1];
+        if (s) {
+          arr.push({
+            id: `slot-${i}`,
+            slotNumber: i,
+            personName: s.person,
+            baseDrink: s.base,
+            customName: '',
+            modifiers: {
+              milk: s.milk || 'none',
+              sweetness: s.sweetness || 'normal',
+              gao: !!s.gao,
+              iced: isIcedOnly(s.base) ? true : isHotOnly(s.base) ? false : !!s.iced,
+            },
+            active: true,
+          });
+        } else {
+          arr.push({
+            id: `slot-${i}`,
+            slotNumber: i,
+            personName: '',
+            baseDrink: 'kopi',
+            customName: '',
+            modifiers: { milk: 'none', sweetness: 'normal', gao: false, iced: false },
+            active: false,
+          });
+        }
+      }
+      return arr;
+    }
+
+    function App() {
+      const [slots, setSlots] = useState(() => {
+        try {
+          const s = localStorage.getItem(STORAGE_KEY);
+          if (s) {
+            const p = JSON.parse(s);
+            if (Array.isArray(p) && p.length === MAX_DRINK_SLOTS) return p;
+          }
+        } catch(e) {}
+        return getInitialSlots();
+      });
+
+      const [isResetOpen, setIsResetOpen] = useState(false);
+      const [isMobileChitOpen, setIsMobileChitOpen] = useState(false);
+      const [toastMsg, setToastMsg] = useState(null);
+      const bottomListRef = useRef(null);
+
+      useEffect(() => {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(slots)); } catch(e) {}
+      }, [slots]);
+
+      const showToast = (txt) => {
+        setToastMsg(txt);
+        setTimeout(() => setToastMsg(c => c === txt ? null : c), 2600);
+      };
+
+      const activeSlots = slots.filter(s => s.active);
+      const activeCount = activeSlots.length;
+      const availableSlots = MAX_DRINK_SLOTS - activeCount;
+
+      const handleUpdateSlot = (updated) => {
+        setSlots(prev => prev.map(s => s.id === updated.id ? updated : s));
+      };
+
+      const handleAddPreset = (base, mod) => {
+        const next = slots.find(s => !s.active);
+        if (!next) { showToast('All 20 slots full!'); return; }
+
+        const sanitized = sanitizeModifiers(base, {
+          milk: mod.milk ?? 'none',
+          sweetness: mod.sweetness ?? 'normal',
+          gao: mod.gao ?? false,
+          iced: mod.iced ?? false,
+        });
+
+        const updated = {
+          ...next,
+          baseDrink: base,
+          customName: '',
+          modifiers: sanitized.modifiers,
+          active: true,
+        };
+        setSlots(prev => prev.map(s => s.id === updated.id ? updated : s));
+        showToast(`Added to Slot #${next.slotNumber} (${getCuteAnimalName(next.slotNumber)})`);
+      };
+
+      const handleAddNewSlot = () => {
+        const next = slots.find(s => !s.active);
+        if (!next) { showToast('All 20 slots full!'); return; }
+
+        const updated = {
+          ...next,
+          baseDrink: 'kopi',
+          customName: '',
+          personName: '',
+          modifiers: { milk: 'none', sweetness: 'normal', gao: false, iced: false },
+          active: true,
+        };
+        setSlots(prev => prev.map(s => s.id === updated.id ? updated : s));
+        showToast(`Activated Slot #${next.slotNumber} (${getCuteAnimalName(next.slotNumber)})`);
+        setTimeout(() => bottomListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+      };
+
+      const handleDuplicate = (id) => {
+        const src = slots.find(s => s.id === id);
+        const tgt = slots.find(s => !s.active);
+        if (!src || !tgt) { showToast('All 20 slots full!'); return; }
+
+        const dup = {
+          ...tgt,
+          baseDrink: src.baseDrink,
+          customName: src.customName,
+          personName: src.personName ? `${src.personName} (2)` : '',
+          modifiers: { ...src.modifiers },
+          active: true,
+        };
+        setSlots(prev => prev.map(s => s.id === dup.id ? dup : s));
+        showToast(`Duplicated to Slot #${tgt.slotNumber}`);
+      };
+
+      const handleDelete = (id) => {
+        setSlots(prev => prev.map(s => s.id === id ? {
+          ...s,
+          active: false,
+          personName: '',
+          customName: '',
+          baseDrink: 'kopi',
+          modifiers: { milk: 'none', sweetness: 'normal', gao: false, iced: false },
+        } : s));
+        showToast('Slot cleared');
+      };
+
+      const handleResetConfirm = () => {
+        setSlots(getInitialSlots());
+        setIsResetOpen(false);
+        showToast('All order slots cleared');
+      };
+
+      const handleCopyOrder = async () => {
+        if (activeCount === 0) { showToast('No drinks to copy yet!'); return; }
+        const text = generateClipboardText(slots, 'local');
+        try {
+          if (navigator.clipboard) await navigator.clipboard.writeText(text);
+          else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+          showToast('Order summary copied to clipboard!');
+        } catch(e) {
+          showToast('Could not copy to clipboard');
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-100 flex flex-col font-sans pb-24 lg:pb-12 text-slate-900">
+          {/* Toast Notification */}
+          {toastMsg && (
+            <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-slate-100 px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 text-xs font-semibold border border-blue-500/40">
+              <span className="text-blue-400">✓</span>
+              <span>{toastMsg}</span>
+            </div>
+          )}
+
+          {/* Header */}
+          <header className="sticky top-0 z-30 bg-slate-900 text-slate-100 border-b border-slate-800 shadow-md">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-lg">
+                  ☕
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-display text-lg font-bold tracking-tight text-white">KopiRun</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-blue-300 font-receipt border border-slate-700">
+                      {activeCount}/{MAX_DRINK_SLOTS} Drinks
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 hidden sm:block">Singapore Kopitiam Drink Order Tabulator</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setSlots(getSampleSlots()); showToast('Loaded 8 sample orders!'); }}
+                  className="px-3 py-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-medium min-h-[44px]"
+                >
+                  Sample Order
+                </button>
+                {activeCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsResetOpen(true)}
+                    className="px-2.5 py-1.5 rounded-lg text-slate-400 hover:text-red-300 hover:bg-slate-800 text-xs font-medium min-h-[44px]"
+                  >
+                    Reset
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCopyOrder}
+                  className="px-4 py-2 text-xs sm:text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-lg shadow-sm min-h-[44px]"
+                >
+                  Copy Order
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* Tongue-in-cheek Hero Section */}
+          <section className="bg-slate-900 text-slate-200 border-b border-slate-800">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-7">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1 max-w-2xl">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-blue-400">
+                    <span>☕ Office Drink Tabulator</span>
+                  </div>
+                  <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-white leading-tight">
+                    Order for the whole kampung without getting scolded by Uncle.
+                  </h1>
+                  <p className="text-slate-400 text-xs sm:text-sm">
+                    Tally up to 20 drinks with zero confusion, keep the stall moving, and copy clean summaries straight to WhatsApp.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setSlots(getSampleSlots()); showToast('Loaded 8 sample orders!'); }}
+                  className="px-4 py-2.5 rounded-xl bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 text-xs font-semibold border border-blue-500/40 min-h-[44px] shrink-0"
+                >
+                  ✨ Load Sample (8 Drinks)
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* Main Layout */}
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 flex-1 w-full">
+            {/* Quick 1-Tap Presets */}
+            <div className="bg-white rounded-2xl p-4 border border-blue-100 shadow-xs mb-5">
+              <div className="flex items-center justify-between mb-2.5">
+                <span className="text-xs font-semibold text-blue-950 uppercase tracking-wider">⚡ Quick 1-Tap Presets</span>
+                <span className="text-xs font-medium text-slate-500">
+                  {availableSlots === 0 ? <strong className="text-red-600">All 20 full</strong> : `${availableSlots} slots left`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                {PRESETS.map(p => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    disabled={availableSlots === 0}
+                    onClick={() => handleAddPreset(p.base, p.mod)}
+                    className={`flex flex-col text-left px-3.5 py-2 rounded-xl border transition-all shrink-0 min-h-[44px] justify-center ${
+                      availableSlots === 0 ? 'opacity-40 cursor-not-allowed bg-slate-50 text-slate-400 border-slate-200' : 'shadow-2xs active:scale-95 ' + p.bg
+                    }`}
+                  >
+                    <span className="text-xs font-bold leading-tight">+ {p.label}</span>
+                    <span className="text-[10px] opacity-80 leading-tight">{p.sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left Column: Slots */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-lg font-bold text-slate-900">
+                    Active Drink Slots ({activeCount}/{MAX_DRINK_SLOTS})
+                  </h2>
+                  <span className="text-xs text-slate-500">Unnamed slots get cute animal personas 🐾</span>
+                </div>
+
+                {activeCount === 0 ? (
+                  <div className="bg-white rounded-3xl p-8 text-center border border-dashed border-slate-300">
+                    <p className="font-display font-bold text-slate-800 text-base mb-1">No drink orders tabulated yet</p>
+                    <p className="text-xs text-slate-500 mb-4">Tap &ldquo;+ Add Drink Slot&rdquo; below or select a 1-tap preset above.</p>
+                    <button
+                      type="button"
+                      onClick={handleAddNewSlot}
+                      className="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-500 min-h-[44px]"
+                    >
+                      + Add First Drink
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3.5">
+                    {slots.filter(s => s.active).map(slot => (
+                      <DrinkSlotCard
+                        key={slot.id}
+                        slot={slot}
+                        onUpdate={handleUpdateSlot}
+                        onDuplicate={handleDuplicate}
+                        onDelete={handleDelete}
+                        canDuplicate={availableSlots > 0}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Relocated: Add Button at the END for Mobile Workflow */}
+                <div ref={bottomListRef} className="pt-2">
+                  {availableSlots > 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleAddNewSlot}
+                      className="w-full py-3.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-500 active:scale-[0.99] text-white font-bold text-sm shadow-md shadow-blue-600/10 flex items-center justify-center gap-2 transition-all min-h-[50px] border border-blue-500"
+                    >
+                      <span>+ Add Drink Slot ({availableSlots} slots left)</span>
+                    </button>
+                  ) : (
+                    <div className="w-full py-3 px-4 rounded-2xl bg-slate-200 text-slate-500 font-semibold text-xs text-center border border-slate-300">
+                      Maximum capacity reached (20 of 20 drinks)
+                    </div>
+                  )}
+                </div>
+
+                {/* Capacity Meter */}
+                <div className="p-3.5 bg-white rounded-2xl border border-blue-100 shadow-2xs">
+                  <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
+                    <span className="font-semibold text-slate-700">Slot Capacity Meter</span>
+                    <span>{activeCount} used / {availableSlots} available</span>
+                  </div>
+                  <div className="grid grid-cols-10 sm:grid-cols-20 gap-1">
+                    {slots.map(s => (
+                      <div
+                        key={s.id}
+                        title={`Slot #${s.slotNumber}: ${s.active ? getDisplayName(s) : 'Empty'}`}
+                        className={`h-2.5 rounded-full transition-all ${s.active ? 'bg-blue-600' : 'bg-slate-200'}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Order Chit (Sticky Desktop) */}
+              <div className="lg:col-span-5 hidden lg:block sticky top-20">
+                <ReceiptSlip slots={slots} onReset={() => setIsResetOpen(true)} />
+              </div>
+            </div>
+          </main>
+
+          {/* Mobile Bottom Bar */}
+          <div className="fixed bottom-0 left-0 right-0 z-30 lg:hidden p-3 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl">
+            <div className="flex items-center justify-between gap-3 max-w-md mx-auto">
+              <div>
+                <div className="flex items-center gap-1.5 text-xs text-white font-bold">
+                  <span>🥤 {activeCount} Drinks Tabulated</span>
+                </div>
+                <span className="text-[11px] text-slate-400">{availableSlots} slots remaining</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyOrder}
+                  disabled={activeCount === 0}
+                  className="px-3 py-2.5 rounded-xl bg-slate-800 text-slate-200 hover:text-white text-xs font-bold disabled:opacity-40 min-h-[44px]"
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileChitOpen(true)}
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 text-white font-bold text-xs shadow-md min-h-[44px]"
+                >
+                  View Chit
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Mobile Sheet Modal */}
+          {isMobileChitOpen && (
+            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/70 backdrop-blur-xs p-0 sm:p-4">
+              <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 relative pb-6">
+                <div className="sticky top-0 z-10 bg-white p-3 border-b border-slate-100 flex items-center justify-between">
+                  <span className="font-display font-bold text-slate-800 text-sm">Tabulated Order Chit</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileChitOpen(false)}
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="p-3">
+                  <ReceiptSlip slots={slots} onReset={() => { setIsMobileChitOpen(false); setIsResetOpen(true); }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Reset Confirmation Modal */}
+          {isResetOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+              <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200">
+                <h3 className="font-display font-bold text-lg text-slate-900 mb-1">Reset All Order Slots?</h3>
+                <p className="text-xs text-slate-600 leading-relaxed mb-5">
+                  This will clear all <strong>{activeCount} drink orders</strong> in your tabulator.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsResetOpen(false)}
+                    className="py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetConfirm}
+                    className="py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-red-600 hover:bg-red-700"
+                  >
+                    Yes, Reset
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function DrinkSlotCard({ slot, onUpdate, onDuplicate, onDelete, canDuplicate }) {
+      const [notice, setNotice] = useState(null);
+      const [expanded, setExpanded] = useState(true);
+
+      const localName = formatLocalKopitiamName(slot);
+      const descName = formatDescriptiveName(slot);
+      const cuteAnimal = getCuteAnimalName(slot.slotNumber);
+
+      const hotOnly = isHotOnly(slot.baseDrink);
+      const icedOnly = isIcedOnly(slot.baseDrink);
+      const hasTemp = canChooseTemp(slot.baseDrink);
+      const hasMilk = ['kopi', 'teh', 'milo'].includes(slot.baseDrink);
+      const hasStrength = ['kopi', 'teh', 'milo'].includes(slot.baseDrink);
+      const hasSweetness = ['kopi', 'teh', 'milo', 'honey_lemon', 'others'].includes(slot.baseDrink);
+      const isHoneyLemon = slot.baseDrink === 'honey_lemon';
+
+      const handleBase = (base) => {
+        const res = sanitizeModifiers(base, slot.modifiers);
+        setNotice(res.ruleTriggered ? res.ruleExplanation : null);
+        onUpdate({ ...slot, baseDrink: base, modifiers: res.modifiers });
+      };
+
+      const handleMilk = (milk) => {
+        let sw = slot.modifiers.sweetness;
+        let not = null;
+        if ((slot.baseDrink === 'kopi' || slot.baseDrink === 'teh') && milk === 'none' && sw === 'kosong') {
+          sw = 'normal';
+          not = `Standard ${slot.baseDrink === 'kopi' ? 'Kopi' : 'Teh'} uses sweet condensed milk. "Kosong" reset to regular. Select O or C for zero sugar.`;
+        }
+        setNotice(not);
+        onUpdate({ ...slot, modifiers: { ...slot.modifiers, milk, sweetness: sw } });
+      };
+
+      const handleSweetness = (sweetness) => {
+        let m = slot.modifiers.milk;
+        let not = null;
+        if ((slot.baseDrink === 'kopi' || slot.baseDrink === 'teh') && sweetness === 'kosong' && m === 'none') {
+          m = 'o';
+          not = `Default ${slot.baseDrink === 'kopi' ? 'Kopi' : 'Teh'} has sweet condensed milk, so "${slot.baseDrink === 'kopi' ? 'Kopi' : 'Teh'} Kosong" cannot exist! Switched to ${slot.baseDrink === 'kopi' ? 'Kopi' : 'Teh'}-O Kosong.`;
+        }
+        setNotice(not);
+        onUpdate({ ...slot, modifiers: { ...slot.modifiers, sweetness, milk: m } });
+      };
+
+      return (
+        <div className={`bg-white rounded-2xl border transition-all ${slot.modifiers.iced ? 'border-sky-300' : 'border-slate-200/90'}`}>
+          <div className="p-3.5 sm:p-4 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className="w-8 h-8 rounded-lg bg-blue-900 text-blue-100 flex items-center justify-center font-receipt text-xs font-bold shrink-0">
+                #{String(slot.slotNumber).padStart(2, '0')}
+              </div>
+              <div className="min-w-0 flex-1">
+                <input
+                  type="text"
+                  value={slot.personName}
+                  onChange={(e) => onUpdate({ ...slot, personName: e.target.value })}
+                  placeholder={`Name (or defaults to ${cuteAnimal})`}
+                  className="w-full text-sm font-semibold text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-600 rounded px-1.5 py-0.5 border border-transparent hover:border-slate-200"
+                />
+                {!slot.personName.trim() && (
+                  <div className="text-[11px] text-blue-600 font-medium px-1 flex items-center gap-1">
+                    <span>Avatar:</span>
+                    <span className="font-semibold">{cuteAnimal}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                disabled={!canDuplicate}
+                onClick={() => onDuplicate(slot.id)}
+                title="Duplicate"
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:text-blue-900 hover:bg-blue-50 disabled:opacity-30"
+              >
+                ⎘
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(slot.id)}
+                title="Delete"
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
+              >
+                🗑
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded(!expanded)}
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              >
+                {expanded ? '▲' : '▼'}
+              </button>
+            </div>
+          </div>
+
+          <div className="px-3.5 sm:px-4 py-2 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2 truncate">
+              <span className="font-bold text-blue-950 text-sm truncate">{localName}</span>
+              <span className="text-slate-300 hidden sm:inline">·</span>
+              <span className="text-slate-500 text-[11px] truncate hidden sm:inline">{descName}</span>
+            </div>
+            <div className="shrink-0">
+              {hotOnly ? (
+                <span className="text-[11px] font-semibold text-slate-700 bg-slate-200/80 px-2 py-0.5 rounded-md">🔥 Hot Only</span>
+              ) : icedOnly ? (
+                <span className="text-[11px] font-semibold text-sky-800 bg-sky-100 px-2 py-0.5 rounded-md">🧊 Iced Only</span>
+              ) : slot.modifiers.iced ? (
+                <span className="text-[11px] font-semibold text-sky-800 bg-sky-100 px-2 py-0.5 rounded-md">🧊 Iced (Peng)</span>
+              ) : (
+                <span className="text-[11px] font-semibold text-blue-900 bg-blue-100/80 px-2 py-0.5 rounded-md">🔥 Hot</span>
+              )}
+            </div>
+          </div>
+
+          {expanded && (
+            <div className="p-3.5 sm:p-4 space-y-4">
+              {/* Base Drink */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Base Beverage</label>
+                <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                  {BASE_DRINKS.map(item => {
+                    const sel = slot.baseDrink === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleBase(item.id)}
+                        className={`flex flex-col items-center justify-center p-2 rounded-xl text-center transition-all min-h-[52px] border ${
+                          sel ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-blue-50/50'
+                        }`}
+                      >
+                        <span className="text-xs font-bold leading-tight">{item.name}</span>
+                        <span className={`text-[10px] ${sel ? 'text-blue-100' : 'text-slate-400'}`}>{item.chinese}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {slot.baseDrink === 'others' && (
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Custom Drink Name:</label>
+                  <input
+                    type="text"
+                    value={slot.customName || ''}
+                    onChange={(e) => onUpdate({ ...slot, customName: e.target.value })}
+                    placeholder="e.g. Bandung, Barley, Sugar Cane..."
+                    className="w-full text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  />
+                </div>
+              )}
+
+              {notice && (
+                <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs font-medium leading-relaxed">
+                  💡 {notice}
+                </div>
+              )}
+
+              {/* Sweetness */}
+              {hasSweetness && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">Sweetness Level</label>
+                    <span className="text-[11px] text-slate-400">{isHoneyLemon ? 'Regular · Siew Dai (No Kosong)' : 'Regular · Siew Dai · Kosong'}</span>
+                  </div>
+                  <div className={`grid gap-1.5 ${isHoneyLemon ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                    <button
+                      type="button"
+                      onClick={() => handleSweetness('normal')}
+                      className={`px-2 py-2 rounded-xl text-xs font-medium border text-center min-h-[44px] ${
+                        slot.modifiers.sweetness === 'normal' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <div className="font-bold">Regular</div>
+                      <div className="text-[10px] opacity-80">Standard Sweet</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSweetness('siew_dai')}
+                      className={`px-2 py-2 rounded-xl text-xs font-medium border text-center min-h-[44px] ${
+                        slot.modifiers.sweetness === 'siew_dai' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <div className="font-bold">Siew Dai</div>
+                      <div className="text-[10px] opacity-80">Less Sweet</div>
+                    </button>
+                    {!isHoneyLemon && (
+                      <button
+                        type="button"
+                        onClick={() => handleSweetness('kosong')}
+                        className={`px-2 py-2 rounded-xl text-xs font-medium border text-center min-h-[44px] ${
+                          slot.modifiers.sweetness === 'kosong' ? 'bg-blue-950 text-blue-200 border-blue-950' : 'bg-white text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        <div className="font-bold">Kosong</div>
+                        <div className="text-[10px] opacity-80">Zero Sugar</div>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Milk */}
+              {hasMilk && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">Milk Type</label>
+                    <span className="text-[11px] text-slate-400">Condensed · O · C · +C</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleMilk('none')}
+                      className={`px-2 py-2 rounded-xl text-xs font-medium border text-center min-h-[44px] ${
+                        slot.modifiers.milk === 'none' ? 'bg-blue-900 text-white border-blue-900' : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <div className="font-bold">Standard</div>
+                      <div className="text-[10px] opacity-80">Condensed</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMilk('o')}
+                      className={`px-2 py-2 rounded-xl text-xs font-medium border text-center min-h-[44px] ${
+                        slot.modifiers.milk === 'o' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <div className="font-bold">O</div>
+                      <div className="text-[10px] opacity-80">No Milk (Black)</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMilk('c')}
+                      className={`px-2 py-2 rounded-xl text-xs font-medium border text-center min-h-[44px] ${
+                        slot.modifiers.milk === 'c' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <div className="font-bold">C</div>
+                      <div className="text-[10px] opacity-80">Evaporated Milk</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMilk('plus_c')}
+                      className={`px-2 py-2 rounded-xl text-xs font-medium border text-center min-h-[44px] ${
+                        slot.modifiers.milk === 'plus_c' ? 'bg-blue-800 text-white border-blue-800' : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <div className="font-bold">+C</div>
+                      <div className="text-[10px] opacity-80">Extra Evap Milk</div>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Strength & Temp */}
+              <div className="pt-1 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                {hasStrength && (
+                  <button
+                    type="button"
+                    onClick={() => onUpdate({ ...slot, modifiers: { ...slot.modifiers, gao: !slot.modifiers.gao } })}
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold border min-h-[44px] ${
+                      slot.modifiers.gao ? 'bg-blue-900 text-white border-blue-900' : 'bg-slate-100 text-slate-700 border-slate-200'
+                    }`}
+                  >
+                    <span>Gao (Thick / Extra Strong)</span>
+                  </button>
+                )}
+
+                {hasTemp ? (
+                  <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => onUpdate({ ...slot, modifiers: { ...slot.modifiers, iced: false } })}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold min-h-[40px] ${
+                        !slot.modifiers.iced ? 'bg-white text-blue-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>🔥 Hot</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdate({ ...slot, modifiers: { ...slot.modifiers, iced: true } })}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold min-h-[40px] ${
+                        slot.modifiers.iced ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>🧊 Iced (Peng)</span>
+                    </button>
+                  </div>
+                ) : hotOnly ? (
+                  <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-medium border border-slate-200">
+                    <span>🔥 Hot only (no ice version)</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-50 text-sky-800 text-xs font-medium border border-sky-200">
+                    <span>🧊 Iced only (no hot version)</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function ReceiptSlip({ slots, onReset }) {
+      const [copied, setCopied] = useState(false);
+      const [formatMode, setFormatMode] = useState('local');
+      const [tab, setTab] = useState('stall');
+
+      const active = slots.filter(s => s.active);
+      const totalCount = active.length;
+      const grouped = groupDrinkOrders(slots);
+      const icedCount = active.filter(s => s.modifiers.iced).length;
+      const hotCount = totalCount - icedCount;
+
+      const handleCopy = async () => {
+        if (totalCount === 0) return;
+        const text = generateClipboardText(slots, formatMode);
+        try {
+          if (navigator.clipboard) await navigator.clipboard.writeText(text);
+          else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2200);
+        } catch(e) {}
+      };
+
+      const handleWhatsApp = () => {
+        if (totalCount === 0) return;
+        const text = generateClipboardText(slots, formatMode);
+        window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+      };
+
+      const handleTelegram = () => {
+        if (totalCount === 0) return;
+        const text = generateClipboardText(slots, formatMode);
+        window.open(`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`, '_blank');
+      };
+
+      return (
+        <div className="bg-slate-50 rounded-3xl border border-blue-200 shadow-md overflow-hidden relative">
+          <div className="bg-slate-900 text-slate-100 p-4 sm:p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-400"></span>
+                <span className="font-receipt text-xs tracking-widest uppercase text-slate-300">KOPITIAM ORDER CHIT</span>
+              </div>
+              <span className="font-receipt text-xs text-blue-400 font-bold">{totalCount} DRINKS</span>
+            </div>
+
+            <div className="flex items-end justify-between">
+              <div>
+                <h2 className="font-display text-xl sm:text-2xl font-bold tracking-tight text-white">Drink Order Slip</h2>
+                <p className="text-xs text-slate-400">Auto-grouped for ordering at the stall</p>
+              </div>
+              <div className="border-2 border-blue-400/80 text-blue-300 px-2.5 py-1 rounded-md rotate-[-4deg] text-[10px] font-receipt font-bold tracking-wider uppercase select-none">
+                新加坡 咖啡店
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800 text-xs">
+              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/60">
+                <span>🔥</span>
+                <span className="text-slate-300">Hot Drinks:</span>
+                <span className="font-receipt font-bold text-white ml-auto">{hotCount}</span>
+              </div>
+              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/60">
+                <span>🧊</span>
+                <span className="text-slate-300">Iced (Peng):</span>
+                <span className="font-receipt font-bold text-white ml-auto">{icedCount}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 py-3 bg-blue-50/70 border-b border-blue-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center p-0.5 bg-white rounded-xl border border-blue-200">
+              <button
+                type="button"
+                onClick={() => setTab('stall')}
+                className={`px-3 py-1.5 rounded-lg font-semibold min-h-[36px] ${tab === 'stall' ? 'bg-blue-600 text-white' : 'text-slate-600'}`}
+              >
+                Stall Order ({grouped.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab('distribution')}
+                className={`px-3 py-1.5 rounded-lg font-semibold min-h-[36px] ${tab === 'distribution' ? 'bg-blue-600 text-white' : 'text-slate-600'}`}
+              >
+                Who Ordered ({totalCount})
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setFormatMode(formatMode === 'local' ? 'descriptive' : 'local')}
+              className="text-blue-700 hover:text-blue-950 font-medium underline min-h-[36px] px-1"
+            >
+              {formatMode === 'local' ? 'Switch to Plain English' : 'Switch to Kopitiam Lingo'}
+            </button>
+          </div>
+
+          <div className="p-4 sm:p-5 space-y-4">
+            {totalCount === 0 ? (
+              <div className="py-10 text-center text-slate-500">
+                <p className="font-semibold text-slate-800 text-sm">No drinks in tabulator</p>
+                <p className="text-xs text-slate-500 mt-1">Add drink slots on the left or tap a Quick Add preset.</p>
+              </div>
+            ) : tab === 'stall' ? (
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between pb-1 border-b border-blue-200/60">
+                  <span>Item Description</span>
+                  <span>Qty</span>
+                </div>
+                {grouped.map((item, idx) => (
+                  <div key={item.key + idx} className="bg-white p-3 rounded-xl border border-blue-100 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <span className="font-display font-bold text-slate-900 text-sm sm:text-base leading-snug">
+                        {formatMode === 'local' ? item.localName : item.descriptiveName}
+                      </span>
+                      <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                        For: {item.personNames.join(', ')}
+                      </div>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2">
+                      <span className={`text-[11px] font-medium px-2 py-0.5 rounded border ${item.isIced ? 'text-sky-700 bg-sky-50 border-sky-200' : 'text-blue-800 bg-blue-50 border-blue-200'}`}>
+                        {item.isIced ? 'Iced' : 'Hot'}
+                      </span>
+                      <div className="w-9 h-9 rounded-lg bg-blue-600 text-white font-receipt font-bold text-sm flex items-center justify-center">
+                        {item.quantity}x
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pb-1 border-b border-blue-200/60">
+                  Distribution Roster
+                </div>
+                {active.map(slot => (
+                  <div key={slot.id} className="bg-white p-2.5 rounded-xl border border-blue-100 flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-receipt font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded text-[11px]">
+                        #{String(slot.slotNumber).padStart(2, '0')}
+                      </span>
+                      <span className="font-bold text-slate-900 truncate">{getDisplayName(slot)}</span>
+                    </div>
+                    <span className="font-semibold text-slate-800 truncate">
+                      {formatMode === 'local' ? formatLocalKopitiamName(slot) : formatDescriptiveName(slot)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {totalCount > 0 && (
+              <div className="space-y-2.5 pt-3 border-t border-blue-200/80">
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className={`w-full py-3 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all min-h-[48px] ${
+                    copied ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'
+                  }`}
+                >
+                  <span>{copied ? '✓ Copied for WhatsApp / Telegram!' : '📋 Copy Formatted Summary'}</span>
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleWhatsApp}
+                    className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-xs min-h-[44px]"
+                  >
+                    <span>Share WhatsApp</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTelegram}
+                    className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold text-xs min-h-[44px]"
+                  >
+                    <span>Share Telegram</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={onReset}
+                  className="w-full py-2 px-3 rounded-xl text-slate-500 hover:text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center justify-center min-h-[40px]"
+                >
+                  <span>Reset All 20 Order Slots</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
